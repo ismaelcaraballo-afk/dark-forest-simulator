@@ -329,7 +329,7 @@ const DarkForestSimulator = () => {
     setShowCriticisms(false);
   };
 
-  const exportResults = () => {
+  const exportResults = (format: 'json' | 'csv' | 'html' | 'txt' = 'json') => {
     const detailedDecisions = playerDecisions.map(decision => {
       const scenarioData = scenarios[educationContext as keyof typeof scenarios][decision.scenario];
       const choiceData = darkForestChoices.find(c => c.id === decision.choice);
@@ -358,52 +358,186 @@ const DarkForestSimulator = () => {
       },
     };
 
-    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-      JSON.stringify(results, null, 2)
-    )}`;
+    const dateStr = new Date().toISOString().split('T')[0];
+    const fileName = `dark_forest_results_${dateStr}`;
+    
+    let content: string;
+    let mimeType: string;
+    let fileExtension: string;
 
+    switch (format) {
+      case 'csv':
+        content = generateCSV(results);
+        mimeType = 'text/csv';
+        fileExtension = 'csv';
+        break;
+      case 'html':
+        content = generateHTML(results);
+        mimeType = 'text/html';
+        fileExtension = 'html';
+        break;
+      case 'txt':
+        content = generateTXT(results);
+        mimeType = 'text/plain';
+        fileExtension = 'txt';
+        break;
+      default:
+        content = JSON.stringify(results, null, 2);
+        mimeType = 'text/json';
+        fileExtension = 'json';
+    }
+
+    const dataString = `data:${mimeType};charset=utf-8,${encodeURIComponent(content)}`;
     const link = document.createElement("a");
-    link.href = jsonString;
-    link.download = `dark_forest_results_${new Date().toISOString().split('T')[0]}.json`;
+    link.href = dataString;
+    link.download = `${fileName}.${fileExtension}`;
 
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const exportToGitHub = async () => {
-    try {
-      const repoName = prompt("Enter repository name:", "dark-forest-simulator");
-      if (!repoName) return;
-
-      const description = prompt("Enter description (optional):", "Dark Forest Simulator - Educational Game Theory Tool");
-      const isPrivate = confirm("Make repository private?");
-
-      const response = await fetch("/api/github/export", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          repoName,
-          description,
-          isPrivate,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        alert(`Project successfully exported to GitHub!\n\nRepository: ${result.repository.name}\nURL: ${result.repository.url}`);
-        window.open(result.repository.url, "_blank");
-      } else {
-        alert(`Failed to export to GitHub: ${result.error}\n\nDetails: ${result.details}`);
-      }
-    } catch (error) {
-      console.error("GitHub export error:", error);
-      alert("Failed to export to GitHub. Please check the console for details.");
-    }
+  const generateCSV = (results: any) => {
+    const profile = results.profile;
+    const normalizedScores = results.normalizedScores;
+    
+    let csv = 'Category,Value\n';
+    csv += `Session ID,${results.sessionId}\n`;
+    csv += `Export Date,${results.exportDate}\n`;
+    csv += `Context,${results.context}\n`;
+    csv += `Profile Type,${profile.type}\n`;
+    csv += `Profile Description,${profile.description}\n`;
+    csv += `Cooperation Score,${normalizedScores.cooperation}\n`;
+    csv += `Caution Score,${normalizedScores.caution}\n`;
+    csv += `Aggression Score,${normalizedScores.aggression}\n\n`;
+    
+    csv += 'Scenario,Choice,Timestamp,Cooperation Weight,Caution Weight,Aggression Weight\n';
+    results.detailedDecisions.forEach((decision: any) => {
+      csv += `"${decision.scenarioTitle}","${decision.choiceLabel}","${decision.timestamp}",${decision.weightsApplied.cooperation},${decision.weightsApplied.caution},${decision.weightsApplied.aggression}\n`;
+    });
+    
+    return csv;
   };
+
+  const generateHTML = (results: any) => {
+    const profile = results.profile;
+    const normalizedScores = results.normalizedScores;
+    
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dark Forest Simulation Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+        h1, h2 { color: #333; }
+        .header { background: #f4f4f4; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
+        .profile { background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .scores { display: flex; gap: 20px; margin: 20px 0; }
+        .score-card { background: #f9f9f9; padding: 15px; border-radius: 8px; flex: 1; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f4f4f4; }
+        .cooperation { color: #2d5a27; }
+        .caution { color: #8b5a00; }
+        .aggression { color: #a91e22; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Dark Forest Simulation Results</h1>
+        <p><strong>Session ID:</strong> ${results.sessionId}</p>
+        <p><strong>Export Date:</strong> ${new Date(results.exportDate).toLocaleDateString()}</p>
+        <p><strong>Context:</strong> ${results.context}</p>
+    </div>
+
+    <div class="profile">
+        <h2>Strategic Profile</h2>
+        <h3>${profile.type}</h3>
+        <p>${profile.description}</p>
+        <p><em>${profile.tendency}</em></p>
+    </div>
+
+    <h2>Decision Analysis Scores</h2>
+    <div class="scores">
+        <div class="score-card">
+            <h3 class="cooperation">Cooperation</h3>
+            <p><strong>${normalizedScores.cooperation}</strong></p>
+            <p>Seeking mutual benefit</p>
+        </div>
+        <div class="score-card">
+            <h3 class="caution">Caution</h3>
+            <p><strong>${normalizedScores.caution}</strong></p>
+            <p>Information gathering focus</p>
+        </div>
+        <div class="score-card">
+            <h3 class="aggression">Aggression</h3>
+            <p><strong>${normalizedScores.aggression}</strong></p>
+            <p>Preemptive action tendency</p>
+        </div>
+    </div>
+
+    <h2>Detailed Decisions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Scenario</th>
+                <th>Choice Made</th>
+                <th>Cooperation Weight</th>
+                <th>Caution Weight</th>
+                <th>Aggression Weight</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${results.detailedDecisions.map((decision: any) => `
+                <tr>
+                    <td>${decision.scenarioTitle}</td>
+                    <td>${decision.choiceLabel}</td>
+                    <td class="cooperation">${decision.weightsApplied.cooperation}</td>
+                    <td class="caution">${decision.weightsApplied.caution}</td>
+                    <td class="aggression">${decision.weightsApplied.aggression}</td>
+                </tr>
+            `).join('')}
+        </tbody>
+    </table>
+</body>
+</html>`;
+  };
+
+  const generateTXT = (results: any) => {
+    const profile = results.profile;
+    const normalizedScores = results.normalizedScores;
+    
+    let txt = 'DARK FOREST SIMULATION RESULTS\n';
+    txt += '================================\n\n';
+    txt += `Session ID: ${results.sessionId}\n`;
+    txt += `Export Date: ${new Date(results.exportDate).toLocaleDateString()}\n`;
+    txt += `Context: ${results.context}\n\n`;
+    
+    txt += 'STRATEGIC PROFILE\n';
+    txt += '-----------------\n';
+    txt += `Type: ${profile.type}\n`;
+    txt += `Description: ${profile.description}\n`;
+    txt += `Tendency: ${profile.tendency}\n\n`;
+    
+    txt += 'DECISION ANALYSIS SCORES\n';
+    txt += '------------------------\n';
+    txt += `Cooperation Score: ${normalizedScores.cooperation} (Seeking mutual benefit)\n`;
+    txt += `Caution Score: ${normalizedScores.caution} (Information gathering focus)\n`;
+    txt += `Aggression Score: ${normalizedScores.aggression} (Preemptive action tendency)\n\n`;
+    
+    txt += 'DETAILED DECISIONS\n';
+    txt += '------------------\n';
+    results.detailedDecisions.forEach((decision: any, index: number) => {
+      txt += `${index + 1}. ${decision.scenarioTitle}\n`;
+      txt += `   Choice: ${decision.choiceLabel}\n`;
+      txt += `   Weights Applied - Cooperation: ${decision.weightsApplied.cooperation}, Caution: ${decision.weightsApplied.caution}, Aggression: ${decision.weightsApplied.aggression}\n\n`;
+    });
+    
+    return txt;
+  };
+
 
   // --- Component Rendering ---
 
@@ -827,30 +961,50 @@ const DarkForestSimulator = () => {
               </div>
             </div>
           </div>
-          <div className="text-center mt-8 space-x-4">
-            <button
-              onClick={exportResults}
-              className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all focus:outline-none focus:ring-2 focus:ring-green-400"
-              data-testid="button-export-results"
-            >
-              <Download className="w-5 h-5 inline mr-2" />
-              Export Results
-            </button>
-            <button
-              onClick={exportToGitHub}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-xl font-semibold text-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400"
-              data-testid="button-export-github"
-            >
-              <Globe className="w-5 h-5 inline mr-2" />
-              Export to GitHub
-            </button>
-            <button
-              onClick={resetSimulation}
-              className="bg-secondary hover:bg-secondary/90 text-foreground px-8 py-4 rounded-xl font-semibold text-lg transition-all focus:outline-none focus:ring-2 focus:ring-muted"
-              data-testid="button-reset-simulation"
-            >
-              Start Over
-            </button>
+          <div className="text-center mt-8 space-y-4">
+            <div className="space-x-4">
+              <button
+                onClick={() => exportResults('json')}
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-green-400"
+                data-testid="button-export-json"
+              >
+                <Download className="w-4 h-4 inline mr-2" />
+                Export JSON
+              </button>
+              <button
+                onClick={() => exportResults('csv')}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-blue-400"
+                data-testid="button-export-csv"
+              >
+                <Download className="w-4 h-4 inline mr-2" />
+                Export CSV
+              </button>
+              <button
+                onClick={() => exportResults('html')}
+                className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-purple-400"
+                data-testid="button-export-html"
+              >
+                <Download className="w-4 h-4 inline mr-2" />
+                Export HTML
+              </button>
+              <button
+                onClick={() => exportResults('txt')}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-gray-400"
+                data-testid="button-export-txt"
+              >
+                <Download className="w-4 h-4 inline mr-2" />
+                Export Text
+              </button>
+            </div>
+            <div>
+              <button
+                onClick={resetSimulation}
+                className="bg-secondary hover:bg-secondary/90 text-foreground px-8 py-4 rounded-xl font-semibold text-lg transition-all focus:outline-none focus:ring-2 focus:ring-muted"
+                data-testid="button-reset-simulation"
+              >
+                Start Over
+              </button>
+            </div>
           </div>
         </div>
       </div>
