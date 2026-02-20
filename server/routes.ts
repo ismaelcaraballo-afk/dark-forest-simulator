@@ -2,10 +2,192 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { createRepository, pushToRepository, getUncachableGitHubClient } from "./github";
+import { insertTeacherSchema, insertClassSchema, insertClassStudentSchema } from "@shared/schema";
+import { z } from "zod";
 import fs from "fs/promises";
 import path from "path";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  
+  // Teacher routes
+  app.post("/api/teachers", async (req, res) => {
+    try {
+      const validatedData = insertTeacherSchema.parse(req.body);
+      const teacher = await storage.createTeacher(validatedData);
+      res.json(teacher);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create teacher", details: error.message });
+    }
+  });
+
+  app.get("/api/teachers/:id", async (req, res) => {
+    try {
+      const teacher = await storage.getTeacher(req.params.id);
+      if (!teacher) {
+        return res.status(404).json({ error: "Teacher not found" });
+      }
+      res.json(teacher);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get teacher", details: error.message });
+    }
+  });
+
+  app.get("/api/teachers/user/:userId", async (req, res) => {
+    try {
+      const teacher = await storage.getTeacherByUserId(req.params.userId);
+      if (!teacher) {
+        return res.status(404).json({ error: "Teacher not found" });
+      }
+      res.json(teacher);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get teacher", details: error.message });
+    }
+  });
+
+  // Class routes
+  app.post("/api/classes", async (req, res) => {
+    try {
+      const validatedData = insertClassSchema.parse(req.body);
+      const cls = await storage.createClass(validatedData);
+      res.json(cls);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create class", details: error.message });
+    }
+  });
+
+  app.get("/api/classes/:id", async (req, res) => {
+    try {
+      const cls = await storage.getClass(req.params.id);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.json(cls);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get class", details: error.message });
+    }
+  });
+
+  app.get("/api/classes/code/:sessionCode", async (req, res) => {
+    try {
+      const cls = await storage.getClassBySessionCode(req.params.sessionCode);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.json(cls);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get class", details: error.message });
+    }
+  });
+
+  app.get("/api/teachers/:teacherId/classes", async (req, res) => {
+    try {
+      const classes = await storage.getTeacherClasses(req.params.teacherId);
+      res.json(classes);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get teacher classes", details: error.message });
+    }
+  });
+
+  app.put("/api/classes/:id", async (req, res) => {
+    try {
+      // Validate class ID
+      const classId = z.string().min(1).parse(req.params.id);
+      // Validate updates - only allow safe fields to be updated
+      const updateSchema = z.object({
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        isActive: z.number().int().min(0).max(1).optional(),
+      });
+      const validatedUpdates = updateSchema.parse(req.body);
+      
+      const updatedClass = await storage.updateClass(classId, validatedUpdates);
+      if (!updatedClass) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.json(updatedClass);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update class", details: error.message });
+    }
+  });
+
+  // Class student routes
+  app.post("/api/classes/:classId/students", async (req, res) => {
+    try {
+      // Validate class ID and user ID
+      const classId = z.string().min(1).parse(req.params.classId);
+      const addStudentSchema = z.object({
+        userId: z.string().min(1)
+      });
+      const { userId } = addStudentSchema.parse(req.body);
+      
+      const classStudent = await storage.addStudentToClass({
+        classId,
+        userId
+      });
+      res.json(classStudent);
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add student to class", details: error.message });
+    }
+  });
+
+  app.get("/api/classes/:classId/students", async (req, res) => {
+    try {
+      const students = await storage.getClassStudents(req.params.classId);
+      res.json(students);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get class students", details: error.message });
+    }
+  });
+
+  app.get("/api/students/:userId/classes", async (req, res) => {
+    try {
+      const classes = await storage.getStudentClasses(req.params.userId);
+      res.json(classes);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get student classes", details: error.message });
+    }
+  });
+
+  app.delete("/api/classes/:classId/students/:userId", async (req, res) => {
+    try {
+      // Validate path parameters
+      const classId = z.string().min(1).parse(req.params.classId);
+      const userId = z.string().min(1).parse(req.params.userId);
+      
+      const success = await storage.removeStudentFromClass(classId, userId);
+      if (!success) {
+        return res.status(404).json({ error: "Student not found in class" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to remove student from class", details: error.message });
+    }
+  });
+
+  // Teacher analytics routes
+  app.get("/api/teachers/:teacherId/analytics", async (req, res) => {
+    try {
+      const analytics = await storage.getTeacherAnalytics(req.params.teacherId);
+      res.json(analytics);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get teacher analytics", details: error.message });
+    }
+  });
   
   // GitHub integration endpoint
   app.post("/api/github/export", async (req, res) => {

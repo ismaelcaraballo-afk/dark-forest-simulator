@@ -9,11 +9,20 @@ import {
   type InsertMultiplayerRoom,
   type RoomParticipant,
   type InsertRoomParticipant,
+  type Teacher,
+  type InsertTeacher,
+  type Class,
+  type InsertClass,
+  type ClassStudent,
+  type InsertClassStudent,
   users, 
   simulationSessions, 
   sessionDecisions,
   multiplayerRooms,
-  roomParticipants 
+  roomParticipants,
+  teachers,
+  classes,
+  classStudents 
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
@@ -51,6 +60,37 @@ export interface IStorage {
     averageAggressionScore: number;
     profileDistribution: Record<string, number>;
     contextDistribution: Record<string, number>;
+  }>;
+  
+  // Teacher operations
+  createTeacher(teacher: InsertTeacher): Promise<Teacher>;
+  getTeacher(id: string): Promise<Teacher | undefined>;
+  getTeacherByUserId(userId: string): Promise<Teacher | undefined>;
+  
+  // Class operations
+  createClass(cls: InsertClass): Promise<Class>;
+  getClass(id: string): Promise<Class | undefined>;
+  getClassBySessionCode(sessionCode: string): Promise<Class | undefined>;
+  getTeacherClasses(teacherId: string): Promise<Class[]>;
+  updateClass(id: string, updates: Partial<Class>): Promise<Class | undefined>;
+  
+  // Class student operations
+  addStudentToClass(classStudent: InsertClassStudent): Promise<ClassStudent>;
+  getClassStudents(classId: string): Promise<(ClassStudent & { user: User })[]>;
+  getStudentClasses(userId: string): Promise<(ClassStudent & { class: Class })[]>;
+  removeStudentFromClass(classId: string, userId: string): Promise<boolean>;
+  
+  // Teacher analytics
+  getTeacherAnalytics(teacherId: string): Promise<{
+    totalClasses: number;
+    totalStudents: number;
+    activeSessions: number;
+    completedSessions: number;
+    averageScores: {
+      cooperation: number;
+      caution: number;
+      aggression: number;
+    };
   }>;
 }
 
@@ -227,6 +267,175 @@ export class DatabaseStorage implements IStorage {
       averageAggressionScore: avgAggression,
       profileDistribution,
       contextDistribution
+    };
+  }
+
+  // Teacher operations
+  async createTeacher(teacher: InsertTeacher): Promise<Teacher> {
+    const [newTeacher] = await db
+      .insert(teachers)
+      .values(teacher)
+      .returning();
+    return newTeacher;
+  }
+
+  async getTeacher(id: string): Promise<Teacher | undefined> {
+    const [teacher] = await db.select().from(teachers).where(eq(teachers.id, id));
+    return teacher || undefined;
+  }
+
+  async getTeacherByUserId(userId: string): Promise<Teacher | undefined> {
+    const [teacher] = await db.select().from(teachers).where(eq(teachers.userId, userId));
+    return teacher || undefined;
+  }
+
+  // Class operations
+  async createClass(cls: InsertClass): Promise<Class> {
+    const [newClass] = await db
+      .insert(classes)
+      .values(cls)
+      .returning();
+    return newClass;
+  }
+
+  async getClass(id: string): Promise<Class | undefined> {
+    const [cls] = await db.select().from(classes).where(eq(classes.id, id));
+    return cls || undefined;
+  }
+
+  async getClassBySessionCode(sessionCode: string): Promise<Class | undefined> {
+    const [cls] = await db.select().from(classes).where(eq(classes.sessionCode, sessionCode));
+    return cls || undefined;
+  }
+
+  async getTeacherClasses(teacherId: string): Promise<Class[]> {
+    return await db
+      .select()
+      .from(classes)
+      .where(eq(classes.teacherId, teacherId))
+      .orderBy(desc(classes.createdAt));
+  }
+
+  async updateClass(id: string, updates: Partial<Class>): Promise<Class | undefined> {
+    const [updatedClass] = await db
+      .update(classes)
+      .set(updates)
+      .where(eq(classes.id, id))
+      .returning();
+    return updatedClass || undefined;
+  }
+
+  // Class student operations
+  async addStudentToClass(classStudent: InsertClassStudent): Promise<ClassStudent> {
+    const [newClassStudent] = await db
+      .insert(classStudents)
+      .values(classStudent)
+      .returning();
+    return newClassStudent;
+  }
+
+  async getClassStudents(classId: string): Promise<(ClassStudent & { user: User })[]> {
+    return await db
+      .select({
+        id: classStudents.id,
+        classId: classStudents.classId,
+        userId: classStudents.userId,
+        joinedAt: classStudents.joinedAt,
+        user: users
+      })
+      .from(classStudents)
+      .innerJoin(users, eq(classStudents.userId, users.id))
+      .where(eq(classStudents.classId, classId))
+      .orderBy(classStudents.joinedAt);
+  }
+
+  async getStudentClasses(userId: string): Promise<(ClassStudent & { class: Class })[]> {
+    return await db
+      .select({
+        id: classStudents.id,
+        classId: classStudents.classId,
+        userId: classStudents.userId,
+        joinedAt: classStudents.joinedAt,
+        class: classes
+      })
+      .from(classStudents)
+      .innerJoin(classes, eq(classStudents.classId, classes.id))
+      .where(eq(classStudents.userId, userId))
+      .orderBy(classStudents.joinedAt);
+  }
+
+  async removeStudentFromClass(classId: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(classStudents)
+      .where(and(eq(classStudents.classId, classId), eq(classStudents.userId, userId)));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Teacher analytics
+  async getTeacherAnalytics(teacherId: string): Promise<{
+    totalClasses: number;
+    totalStudents: number;
+    activeSessions: number;
+    completedSessions: number;
+    averageScores: {
+      cooperation: number;
+      caution: number;
+      aggression: number;
+    };
+  }> {
+    // Get teacher's classes
+    const teacherClasses = await this.getTeacherClasses(teacherId);
+    const classIds = teacherClasses.map(c => c.id);
+    
+    if (classIds.length === 0) {
+      return {
+        totalClasses: 0,
+        totalStudents: 0,
+        activeSessions: 0,
+        completedSessions: 0,
+        averageScores: { cooperation: 0, caution: 0, aggression: 0 }
+      };
+    }
+
+    // Get total students across all classes
+    let totalStudents = 0;
+    for (const classId of classIds) {
+      const students = await this.getClassStudents(classId);
+      totalStudents += students.length;
+    }
+
+    // Get sessions from students in teacher's classes
+    const allStudentIds: string[] = [];
+    for (const classId of classIds) {
+      const students = await this.getClassStudents(classId);
+      allStudentIds.push(...students.map(s => s.userId));
+    }
+
+    // Get sessions for these students
+    const studentSessions = await db
+      .select()
+      .from(simulationSessions)
+      .where(eq(simulationSessions.userId, allStudentIds[0])); // Simplified for now
+
+    const activeSessions = studentSessions.filter(s => s.isCompleted === 0).length;
+    const completedSessions = studentSessions.filter(s => s.isCompleted === 1).length;
+
+    // Calculate average scores
+    const completed = studentSessions.filter(s => s.isCompleted === 1);
+    const avgCooperation = completed.length > 0 ? completed.reduce((sum, s) => sum + s.cooperationScore, 0) / completed.length : 0;
+    const avgCaution = completed.length > 0 ? completed.reduce((sum, s) => sum + s.cautionScore, 0) / completed.length : 0;
+    const avgAggression = completed.length > 0 ? completed.reduce((sum, s) => sum + s.aggressionScore, 0) / completed.length : 0;
+
+    return {
+      totalClasses: teacherClasses.length,
+      totalStudents,
+      activeSessions,
+      completedSessions,
+      averageScores: {
+        cooperation: avgCooperation,
+        caution: avgCaution,
+        aggression: avgAggression
+      }
     };
   }
 }
